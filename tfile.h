@@ -1,9 +1,65 @@
 #pragma once
+
 #include <stdio.h>
 
 #include <fstream>
+#include <stdexcept>
 #include <string>
 #include <type_traits>
+
+/*
+  tfile is a small header-only library for C++11 and up which offers a small
+  number of extremely useful features:
+
+    * Handle: a zero-cost abstraction around C's FILE* classic file handle
+    * useful functions to read a whole file at once, write a whole file at once,
+      and get the bytesize of a file
+
+  The type FILE*, called a "file handle", is the basis of nearly all file I/O in
+  C and C++.
+
+  tfile::Handle offers some advantages over FILE*:
+
+    1. It automatically closes the FILE* when the variable goes out of scope
+    2. It prevents impossible reads or writes at compile time
+    3. By default, it throws an exception if the FILE* fails to open
+    4. There's a readLine method that reads a single line at a time.
+
+  File handles are usually created in C/C++ using fopen - see
+  http://man7.org/linux/man-pages/man3/fopen.3.html
+
+  File handles can be opened in six modes:
+
+    * r: read-only, position at the start of the file
+    * r+: read-write, position at the start of the file
+    * w: write-only, truncate the file to empty
+    * w+: read-write, truncate the file to empty
+    * a: write-only, position at the end of the file
+    * a+: read-write, position at the end of the file
+
+  There is nothing in C or C++ to prevent writing code to, say, read from a
+  write-only file handle - it will simply return an error at runtime.
+
+  But if you use a Handle, only the methods you can actually use are provided.
+  Attemping to read from a write-only Handle will result in an  error at
+  compilation time.
+
+  Example of usage:
+
+    auto contents = tfile::read("myfile.txt");
+
+    auto handle = tfile::reader("myfile2.txt");
+
+    // handle.write("hello");  // Won't compile
+
+    while (true) {
+        auto line = handle.readLine();
+        if (line.empty())
+            break;
+        // Process the line here.
+    }
+*/
+
 
 namespace tfile {
 
@@ -50,15 +106,11 @@ enum class Position {
     // Seeks to the Position and offset.
     // Returns false on failure, not that that's much use.
     bool seek(Position position, long offset = 0) {
-
 */
+
 template <bool CAN_READ, bool CAN_WRITE>
 class Handle;
 
-/**
-   These next functions open a Handler corresponding to the different file
-   opening modes from fopen - see man fopen(3) for more details.
- */
 Handle<true, false> reader(char const* filename);             // mode "r"
 Handle<true,  true> readWriter(char const* filename);         // mode "r+"
 Handle<false, true> writer(char const* filename);             // mode "w"
@@ -73,23 +125,24 @@ Handle<true,  true> readAppender(char const* filename);       // mode "a+"
 template <bool CAN_READ, bool CAN_WRITE>
 class Handle {
   public:
-    Handle(char const* name, char const* mode) : file_(fopen(name, mode)) {
+    static const size_t BLOCK_SIZE = 1024;
+
+    Handle(char const* name, char const* mode) {
+        file_ = fopen(name, mode);
+        if (not file_)
+            throw std::runtime_error(name);
     }
+
+    Handle(Handle&&) = default;
+    Handle(Handle const&) = delete;
 
     ~Handle() {
         fclose(file_);
     }
 
-    bool error() const {
-        return not file_;
-    }
-
-    explicit operator bool() const {
+    FILE* get() {
         return file_;
     }
-
-    Handle(Handle&&) = default;
-    Handle(Handle const&) = delete;
 
     template <class Size = size_t>
     typename std::enable_if<CAN_READ, Size>::type
@@ -101,6 +154,32 @@ class Handle {
     typename std::enable_if<CAN_READ, Size>::type
     read(std::string& s) {
         return read(&s[0], s.size());
+    }
+
+    template <class String = std::string>
+    typename std::enable_if<CAN_READ, String>::type
+    read(size_t size = BLOCK_SIZE) {
+        std::string result(size, '\0');
+        result.resize(read(result));
+        return result;
+    }
+
+    /**
+       Reads a single line from a file.
+     */
+    template <class String = std::string>
+    typename std::enable_if<CAN_READ, String>::type
+    readLine() {
+        std::string line;
+        char ch = '\0';
+        while (true) {
+            auto len = read(&ch, 1);
+            if (not len or ch == '\n')
+                break;
+            if (ch != '\r')
+                line += ch;
+        }
+        return line;
     }
 
     template <class Size = size_t>
@@ -128,6 +207,7 @@ class Handle {
   private:
     FILE* file_;
 };
+
 
 inline
 Handle<true, false> reader(char const* filename) {
@@ -167,18 +247,8 @@ std::string read(char const* filename) {
 }
 
 template <class String>
-void write(char const* filename, String const& s) {
-    writer(filename).write(s);
-}
-
-inline
-void write(char const* filename, char const* data, size_t length) {
+void write(char* const filename, char const* data, size_t length) {
     writer(filename).write(data, length);
-}
-
-inline
-void write(char const* filename, char const* data) {
-    writer(filename).write(data);
 }
 
 inline
