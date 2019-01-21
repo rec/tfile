@@ -1,6 +1,6 @@
 #pragma once
 
-#include <stdef.h>
+#include <stddef.h>
 #include <stdio.h>
 
 #include <fstream>
@@ -112,53 +112,57 @@ class ReaderAppender;  // mode "a+"
 // Implementation details follow
 //
 
-inline
-std::string read(char const* filename) {
-    std::string result(size(filename), '\0');
-    reader(filename).read(result);
-    return result;
-}
-
-inline
-void write(char* const filename, char const* data, size_t length) {
-    writer(filename).write(data, length);
-}
-
-inline
-size_t size(const char* filename) {
-    // From http://stackoverflow.com/questions/5840148
-    std::ifstream in(filename, std::ifstream::ate | std::ifstream::binary);
-    return in.tellg();
-}
-
 namespace detail {
 
 class Opener {
   protected:
     Opener(const char* filename, const char* mode)
-            : _file(fopen(filename, mode)) {
+            : file_(fopen(filename, mode)) {
 #ifdef __cpp_exceptions
         if (not file_)
-            throw std::runtime_error(name);
+            throw std::runtime_error(filename);
 #endif
     }
 
+    Opener(Opener&& other) : file_(other.file_) {
+        other.file_ = nullptr;
+    }
+
+    Opener& operator=(Opener&& other) {
+        close();
+        file_ = other.file_;
+        other.file_ = nullptr;
+        return *this;
+    }
+
+    Opener() : file_(nullptr) {}
+    Opener(const Opener&) = delete;
+    Opener& operator=(const Opener&) = delete;
+
   public:
+    ~Opener() { close(); }
+
+    void close() {
+        if (file_) {
+            fclose(file_);
+            file_ = nullptr;
+        }
+    }
+
     FILE* get() { return file_; }
 
-    Opener(Opener&&) = default;
-    Opener(Opener const&) = delete;
-
     int seek(off_t offset, int whence) {
-        return fseeko(file_, offset, whence));
+        return fseeko(file_, offset, whence);
     }
 
   protected:
-    FILE* const file_;
+    FILE* file_;
 };
 
 class Reader : public Opener {
   public:
+    using Opener::Opener;
+
     size_t read(char* data, size_t length) {
         return fread(data, 1, length, file_);
     }
@@ -168,7 +172,7 @@ class Reader : public Opener {
     }
 
     std::string read(size_t size) {
-        std::string result(size);
+        std::string result(size, '\0');
         result.resize(read(result));
         return result;
     }
@@ -192,11 +196,13 @@ class Reader : public Opener {
 
 class Writer : public Opener {
   public:
+    using Opener::Opener;
+
     size_t write(const char* data, size_t length) {
         return fwrite(data, 1, length, file_);
     }
 
-    size_ write(const char* data) {
+    size_t write(const char* data) {
         return write(data, strlen(data));
     }
 
@@ -207,42 +213,68 @@ class Writer : public Opener {
 };
 
 class ReaderWriter : public Reader, public Writer {
+  public:
+    using Reader::Reader;
     // My first ever multiple inheritance!
 };
 
 }  // namespace detail
 
 
-class Reader : detail::Reader {
+class Reader : public detail::Reader {
   public:
     Reader(const char* filename) : detail::Reader(filename, "r") {}
 };
 
-class ReaderWriter : detail::ReaderWriter {
+class ReaderWriter : public detail::ReaderWriter {
   public:
-    ReadWriter(const char* filename) : detail::ReaderWriter(filename, "r+") {}
+    ReaderWriter(const char* filename) : detail::ReaderWriter(filename, "r+") {}
 };
 
-class Writer : detail::Reader {
+class Writer : public detail::Writer {
   public:
-    Writer(const char* filename) : detail::Reader(filename, "w") {}
+    Writer(const char* filename) : detail::Writer(filename, "w") {}
 };
 
-class TruncateReaderWriter : detail::ReaderWriter {
+class TruncateReaderWriter : public detail::ReaderWriter {
   public:
     TruncateReaderWriter(const char* filename)
             : detail::ReaderWriter(filename, "w+") {}
 };
 
-class Appender : detail::Writer {
+class Appender : public detail::Writer {
   public:
-    Appender(const char* filename) : detail::ReaderWriter(filename, "a") {}
+    Appender(const char* filename) : detail::Writer(filename, "a") {}
 };
 
-class ReaderAppender : detail::ReaderWriter {
+class ReaderAppender : public detail::ReaderWriter {
   public:
     ReaderAppender(const char* filename)
             : detail::ReaderWriter(filename, "a+") {}
 };
+
+inline
+std::string read(char const* filename) {
+    std::string result(size(filename), '\0');
+    Reader(filename).read(result);
+    return result;
+}
+
+inline
+void write(char* const filename, char const* data, size_t length) {
+    Writer(filename).write(data, length);
+}
+
+inline
+void write(const char* filename, const char* data) {
+    Writer(filename).write(data, strlen(data));
+}
+
+inline
+size_t size(const char* filename) {
+    // From http://stackoverflow.com/questions/5840148
+    std::ifstream in(filename, std::ifstream::ate | std::ifstream::binary);
+    return in.tellg();
+}
 
 }  // namespace tfile {

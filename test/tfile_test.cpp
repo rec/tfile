@@ -1,5 +1,7 @@
-#include <gtest/gtest.h>
-#include "tfile.h"
+#include <tfile/tfile.h>
+
+#define CATCH_CONFIG_MAIN
+#include "catch.hpp"
 
 auto const testFilename = "/tmp/tfile.file1.txt";
 
@@ -12,47 +14,44 @@ struct FileDeleter {
     char const* name;
 };
 
-TEST(File, Read) {
+TEST_CASE("read", "[read]") {
     FileDeleter deleter{testFilename};
 
     // Write a whole file.
     tfile::write(testFilename, "Hello, world");
 
     // Read it back and test it.
-    EXPECT_EQ(tfile::read(testFilename), "Hello, world");
+    REQUIRE(tfile::read(testFilename) == "Hello, world");
 }
 
-TEST(File, ReaderWriter) {
+TEST_CASE("write", "[write]") {
     FileDeleter deleter{testFilename};
 
     {
         // Write a file.
-        auto writer = tfile::writer(testFilename);
+        tfile::Writer writer(testFilename);
         writer.write("hello");
         writer.write(" ");
     }
 
-    {
-        // Append to it.
-        auto appender = tfile::appender(testFilename);
-        appender.write("world");
-    }
+    // Append five characters
+    tfile::Appender(testFilename).write("world");
 
-    {
-        // Read the file in tiny chunks.
-        auto reader = tfile::reader(testFilename);
-        std::string buffer(3, ' ');
+    // Read the file in tiny chunks.
+    tfile::Reader reader(testFilename);
+    std::string buffer(3, ' ');
 
-        EXPECT_EQ(reader.read(buffer), 3);
-        EXPECT_EQ(buffer, "hel");
-        EXPECT_EQ(reader.read(buffer), 3);
-        EXPECT_EQ(buffer, "lo ");
-        EXPECT_EQ(reader.read(buffer), 3);
-        EXPECT_EQ(buffer, "wor");
+    REQUIRE(reader.read(buffer) == 3);
+    REQUIRE(buffer == "hel");
+    REQUIRE(reader.read(buffer) == 3);
+    REQUIRE(buffer == "lo ");
+    REQUIRE(reader.read(buffer) == 3);
+    REQUIRE(buffer == "wor");
 
-        // Last chunk is incomplete.
-        buffer = std::string(3, ' ');
-        EXPECT_EQ(reader.read(buffer), 2);
-        EXPECT_EQ(buffer, "ld ");
-    }
+    // Last chunk is incomplete.
+    buffer = std::string(3, ' ');
+    REQUIRE(reader.read(buffer) == 2);
+    REQUIRE(buffer == "ld ");
+
+    REQUIRE(tfile::size(testFilename) == 11);
 }
