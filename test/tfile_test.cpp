@@ -4,6 +4,7 @@
 #include "catch.hpp"
 
 auto const testFilename = "/tmp/tfile.file1.txt";
+auto const testFilename2 = "/tmp/tfile.file2.txt";
 
 struct FileDeleter {
     ~FileDeleter() {
@@ -54,4 +55,29 @@ TEST_CASE("write", "[write]") {
     REQUIRE(buffer == "ld ");
 
     REQUIRE(tfile::size(testFilename) == 11);
+}
+
+TEST_CASE("move semantics", "[move]") {
+    int i = 0;
+
+    FileDeleter d1{testFilename}, d2{testFilename2};
+
+    tfile::write(testFilename, "");
+    tfile::write(testFilename2, "");
+
+    {
+        tfile::ReaderWriter rw1(testFilename);
+        tfile::ReaderWriter rw2(testFilename2);
+        tfile::ReaderWriter rw3(std::move(rw1));
+        rw1 = std::move(rw2);
+        REQUIRE(rw2.get() == nullptr);
+
+        rw1.write("hello, move");
+        rw3.write("hello, three");
+        rw1.seek(0);
+        REQUIRE(rw1.readLine() == "hello, move");
+    }
+
+    REQUIRE(tfile::read(testFilename) == "hello, three");
+    REQUIRE(tfile::read(testFilename2) == "hello, move");
 }

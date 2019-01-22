@@ -7,22 +7,17 @@ number of essential features:
   * functions to read a whole file at once, write a whole file at once,
     and get the bytesize of a file;
 
-* and File Openers: zero-cost abstractions that wrap C's FILE* classic file
-   handle and are handy for applications that keep files open and process them.
+* and Openers: zero-cost abstractions that wrap C's FILE* classic file
+   handle
 
 The functions
 =================
 
-`std::string tfile::read(char const* filename)`
-  Reads an entire file and returns it as a `std::string`
-
-`size_t write(char const* filename, char const* data, size_t length)`
-`size_t write(char const* filename, char const* data)`
-`size_t write(char const* filename, const std::string& s)`
-Tries to write an entire file at once and returns the number of bytes
-that were actually written.
-
-`size_t tfile::size()` returns the byte size of a file.
+* `std::string tfile::read(char const* filename)`
+* `size_t write(char const* filename, char const* data, size_t length)`
+* `size_t write(char const* filename, char const* data)`
+* `size_t write(char const* filename, const std::string& s)`
+* `size_t tfile::size()` returns the byte size of a file.
 
 Examples of usage:
 
@@ -31,11 +26,11 @@ Examples of usage:
     tfile::write("myfile.txt", data);
     std::cout << "myfile.txt: filesize=" << tfile::size("myfile.txt");
 
-File Openers
+Openers
 ==================
 
-File Openers are for applications which need to keep a file open for
-processing. File Openers are a thin wrapper over the C file handle type FILE*,
+Openers are for applications which need to keep a file open for
+processing. Openers are a thin wrapper over the C file handle type FILE*,
 which is the basis of I/O in C and C++.
 
 An File Opener offers these advantages over a raw FILE*:
@@ -51,7 +46,7 @@ simply return an error at runtime - but a File Opener provides read or
 write methods only if they actually work, so these errors can be caught at
 compile-time.
 
-There are six File Openers, corresponding to the six modes in which files
+There are six Openers, corresponding to the six modes in which files
 can be opened:
 
   * `tfile::Reader`: read-only, position at start of file - mode `"r"`
@@ -61,22 +56,25 @@ can be opened:
   * `tfile::Appender`: write-only, position at end of file - mode `"a"`
   * `tfile::ReaderAppender`: read-write, position at end of file - mode `"a+"`
 
+For the exact signatures of methods, see the file
+[tfile.h](https://github.com/rec/tfile/blob/master/include/tfile/tfile.h).
+
 For more information on file opening modes, see
 http://man7.org/linux/man-pages/man3/fopen.3.html
 
 Examples of usage:
 
-  tfile::Reader reader("myfile2.txt");
-  std::string s(10);
-  auto bytes_read = reader.read(s);   // at most 10
-  // reader.write("hello");  // Won't compile
+    tfile::Reader reader("myfile2.txt");
+    std::string s(10);
+    auto bytes_read = reader.read(s);   // read at most 10 chars
+    // reader.write("hello");  // Won't compile
 
-  tfile::Appender("myfile2.txt").write("a new line\n");
-  // tfile::Appender("myfile2.txt").read();  // won't compile
+    tfile::Appender("myfile2.txt").write("a new line\n");
+    // tfile::Appender("myfile2.txt").read();  // won't compile
 
-  while (true) {
-      auto line = reader.readLine();
-      if (line.empty())
-          break;
-      // ...
-  }
+    while (true) {
+        auto line = reader.readLine();
+        if (line.empty())
+            break;
+        // ...
+    }

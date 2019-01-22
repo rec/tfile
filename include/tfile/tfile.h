@@ -79,155 +79,228 @@ Examples of usage:
   }
 */
 
-class Reader;  // mode "r"
-class ReaderWriter;  // mode "r+"
-class Writer;  // mode "w"
-class TruncateReaderWriter; // mode "w+"
-class Appender;  // mode "a"
-class ReaderAppender;  // mode "a+"
+enum class Mode {read, readWrite, write, truncate, append, readAppend};
 
-//
-// Implementation details follow
-//
+template <Mode>
+class Opener;
 
-namespace detail {
+using Reader = Opener<Mode::read>;
+using ReaderWriter = Opener<Mode::readWrite>;
+using Writer = Opener<Mode::write>;
+using TruncateReaderWriter = Opener<Mode::truncate>;
+using Appender = Opener<Mode::append>;
+using ReaderAppender = Opener<Mode::readAppend>;
 
-class Opener {
-  protected:
-    Opener(const char* filename, const char* mode)
-            : file_(fopen(filename, mode)) {
-#ifdef __cpp_exceptions
-        if (not file_)
-            throw std::runtime_error(filename);
-#endif
-    }
-
-    Opener(Opener&& other) : file_(other.file_) {
-        other.file_ = nullptr;
-    }
-
-    Opener& operator=(Opener&& other) {
-        close();
-        file_ = other.file_;
-        other.file_ = nullptr;
-        return *this;
-    }
-
-    Opener() : file_(nullptr) {}
-    Opener(const Opener&) = delete;
-    Opener& operator=(const Opener&) = delete;
-
+/** OpenerBase class for all openers. */
+class OpenerBase {
   public:
-    ~Opener() { close(); }
+    explicit
+    OpenerBase(FILE* file = nullptr) : file_(file) {}
 
-    void close() {
-        if (file_) {
-            fclose(file_);
-            file_ = nullptr;
-        }
-    }
+    explicit
+    OpenerBase(const char* filename, const char* mode);
+    ~OpenerBase() { close(); }
 
+    /** Get the current FILE* */
     FILE* get() { return file_; }
 
-    int seek(off_t offset, int whence) {
-        return fseeko(file_, offset, whence);
-    }
+    /** Close the FILE* and empty it. */
+    void close();
+
+    /** Close the current FILE* and set to new value */
+    void set(FILE* file);
+
+    /** Release the current FILE* so it won't get closed on destruction
+        and return it */
+    FILE* release();
+
+    /**
+       Seek to any offset in the file.
+       whence can be SEEK_SET, SEEK_CUR, or SEEK_END
+    */
+    int seek(off_t offset, int whence = SEEK_SET);
 
   protected:
     FILE* file_;
 };
 
-class Reader : public Opener {
+/** Base class for all Readers. */
+class ReaderBase : public OpenerBase {
   public:
-    using Opener::Opener;
+    using OpenerBase::OpenerBase;
 
-    size_t read(char* data, size_t length) {
-        return fread(data, 1, length, file_);
+
+    size_t read(char* data, size_t length);
+    size_t read(std::string& s);
+    std::string read(size_t size);
+
+    /** Reads a single line from the file. */
+    std::string readLine();
+};
+
+/** Base class for all writers, written as a mix-in so we can have
+    ReaderWriters */
+template <typename Base>
+class WriterMixIn : public Base {
+  public:
+    using Base::Base;
+
+    size_t write(const char* data, size_t length);
+    size_t write(const char* data);
+    size_t write(const std::string& s);
+};
+
+using WriterBase = WriterMixIn<OpenerBase>;
+using ReaderWriterBase = WriterMixIn<ReaderBase>;
+
+//
+// Implementation details follow
+//
+
+inline
+OpenerBase::OpenerBase(const char* filename, const char* mode)
+        : file_(fopen(filename, mode)) {
+#ifdef __cpp_exceptions
+    if (not file_)
+        throw std::runtime_error(filename);
+#endif
+}
+
+inline
+void OpenerBase::close() {
+    if (file_) {
+        fclose(file_);
+        file_ = nullptr;
+    }
+}
+
+inline
+void OpenerBase::set(FILE* file) {
+    close();
+    file_ = file;
+}
+
+inline
+FILE* OpenerBase::release() {
+    auto f = file_;
+    file_ = nullptr;
+    return f;
+}
+
+inline
+int OpenerBase::seek(off_t offset, int whence) {
+    return fseeko(file_, offset, whence);
+}
+
+inline
+size_t ReaderBase::read(char* data, size_t length) {
+    return fread(data, 1, length, file_);
+}
+
+inline
+size_t ReaderBase::read(std::string& s) {
+    return read(&s[0], s.size());
+}
+
+inline
+std::string ReaderBase::read(size_t size) {
+    std::string result(size, '\0');
+    result.resize(read(result));
+    return result;
+}
+
+/**
+   Reads a single line from a file.
+ */
+inline
+std::string ReaderBase::readLine() {
+    std::string line;
+    char ch = '\0';
+    while (true) {
+        auto len = read(&ch, 1);
+        if (not len or ch == '\n')
+            break;
+        if (ch != '\r')
+            line += ch;
+    }
+    return line;
+}
+
+template <typename Base>
+size_t WriterMixIn<Base>::write(const char* data, size_t length) {
+    return fwrite(data, 1, length, this->file_);
+}
+
+template <typename Base>
+size_t WriterMixIn<Base>::write(const char* data) {
+    return write(data, strlen(data));
+}
+
+template <typename Base>
+size_t WriterMixIn<Base>::write(const std::string& s) {
+    return write(s.data(), s.size());
+}
+
+template <Mode>
+struct OpenerTraits {
+    struct Opener;
+    static const char* const mode();
+};
+
+template <>
+struct OpenerTraits<Mode::read> {
+    using Opener = ReaderBase;
+    static const char* const mode() { return "r";}
+};
+
+template <>
+struct OpenerTraits<Mode::readWrite> {
+    using Opener = ReaderWriterBase;
+    static const char* const mode() { return "r+";}
+};
+
+template <>
+struct OpenerTraits<Mode::write> {
+    using Opener = WriterBase;
+    static const char* const mode() { return "w";}
+};
+
+template <>
+struct OpenerTraits<Mode::truncate> {
+    using Opener = ReaderWriterBase;
+    static const char* const mode() { return "w+";}
+};
+
+template <>
+struct OpenerTraits<Mode::append> {
+    using Opener = WriterBase;
+    static const char* const mode() { return "a";}
+};
+
+template <>
+struct OpenerTraits<Mode::readAppend> {
+    using Opener = ReaderWriterBase;
+    static const char* const mode() { return "a+";}
+};
+
+template <Mode MODE>
+class Opener : public OpenerTraits<MODE>::Opener {
+  public:
+    using Traits = OpenerTraits<MODE>;
+    using Base = typename Traits::Opener;
+
+    Opener() {}
+
+    explicit Opener(const char* filename) : Base(filename, Traits::mode()) {}
+    explicit Opener(Opener&& other) : Base(other.release()) {}
+    Opener(const Opener&) = delete;
+
+    Opener& operator=(Opener&& other) {
+        this->set(other.release());
+        return *this;
     }
 
-    size_t read(std::string& s) {
-        return read(&s[0], s.size());
-    }
-
-    std::string read(size_t size) {
-        std::string result(size, '\0');
-        result.resize(read(result));
-        return result;
-    }
-
-    /**
-       Reads a single line from a file.
-     */
-    std::string readLine() {
-        std::string line;
-        char ch = '\0';
-        while (true) {
-            auto len = read(&ch, 1);
-            if (not len or ch == '\n')
-                break;
-            if (ch != '\r')
-                line += ch;
-        }
-        return line;
-    }
-};
-
-class Writer : public Opener {
-  public:
-    using Opener::Opener;
-
-    size_t write(const char* data, size_t length) {
-        return fwrite(data, 1, length, file_);
-    }
-
-    size_t write(const char* data) {
-        return write(data, strlen(data));
-    }
-
-    size_t write(const std::string& s) {
-        return write(s.data(), s.size());
-    }
-
-};
-
-class ReaderWriter : public Reader, public Writer {
-  public:
-    using Reader::Reader;
-};
-
-}  // namespace detail
-
-
-class Reader : public detail::Reader {
-  public:
-    Reader(const char* filename) : detail::Reader(filename, "r") {}
-};
-
-class ReaderWriter : public detail::ReaderWriter {
-  public:
-    ReaderWriter(const char* filename) : detail::ReaderWriter(filename, "r+") {}
-};
-
-class Writer : public detail::Writer {
-  public:
-    Writer(const char* filename) : detail::Writer(filename, "w") {}
-};
-
-class TruncateReaderWriter : public detail::ReaderWriter {
-  public:
-    TruncateReaderWriter(const char* filename)
-            : detail::ReaderWriter(filename, "w+") {}
-};
-
-class Appender : public detail::Writer {
-  public:
-    Appender(const char* filename) : detail::Writer(filename, "a") {}
-};
-
-class ReaderAppender : public detail::ReaderWriter {
-  public:
-    ReaderAppender(const char* filename)
-            : detail::ReaderWriter(filename, "a+") {}
+    Opener& operator=(const Opener& other) = delete;
 };
 
 inline
