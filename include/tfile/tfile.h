@@ -105,7 +105,7 @@ class OpenerBase {
     FILE* get() { return file_; }
 
     /** Close the FILE* and empty it. */
-    void close();
+    int close();
 
     /** Close the current FILE* and set to new value */
     void set(FILE* file);
@@ -167,11 +167,13 @@ OpenerBase::OpenerBase(const char* filename, const char* mode)
 }
 
 inline
-void OpenerBase::close() {
+int OpenerBase::close() {
+    int result = 0;
     if (file_) {
-        fclose(file_);
+        result = fclose(file_);
         file_ = nullptr;
     }
+    return result;
 }
 
 inline
@@ -292,7 +294,7 @@ class Opener : public OpenerTraits<MODE>::Opener {
     Opener() {}
 
     explicit Opener(const char* filename) : Base(filename, Traits::mode()) {}
-    explicit Opener(Opener&& other) : Base(other.release()) {}
+    explicit Opener(Opener&& other) noexcept : Base(other.release()) {}
     Opener(const Opener&) = delete;
 
     Opener& operator=(Opener&& other) {
