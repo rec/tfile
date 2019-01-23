@@ -120,6 +120,9 @@ class OpenerBase {
     */
     int seek(off_t offset, int whence = SEEK_SET);
 
+    /** Return true if the file is non-empty and closed. */
+    bool eof() const { return file_ && feof(file_); }
+
   protected:
     FILE* file_;
 };
@@ -305,11 +308,28 @@ class Opener : public OpenerTraits<MODE>::Opener {
     Opener& operator=(const Opener& other) = delete;
 };
 
+template <typename SizeFunction>
+std::string testableRead(const char* filename, SizeFunction size) {
+    // The file size might change between getting the size and reading it: see
+    // https://www.reddit.com/r/cpp/comments/aiprv9/tiny_file_utilities/eerbyza/
+
+    std::string result(size(filename), '\0');
+    Reader reader(filename);
+    result.resize(reader.read(result));
+
+    while (!reader.eof()) {
+        static const auto BUFFER_SIZE = 16;
+        char buffer[BUFFER_SIZE];
+        if (auto bytes = reader.read(buffer, BUFFER_SIZE))
+            result.insert(result.end(), buffer, buffer + bytes);
+    }
+
+    return result;
+}
+
 inline
 std::string read(const char* filename) {
-    std::string result(size(filename), '\0');
-    Reader(filename).read(result);
-    return result;
+    return testableRead(filename, size);
 }
 
 inline
