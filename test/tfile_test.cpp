@@ -75,7 +75,10 @@ TEST_CASE("move semantics", "[move]") {
         rw1.write("hello, move");
         rw3.write("hello, three");
         rw1.seek(0);
-        REQUIRE(rw1.readLine() == "hello, move");
+        std::string s;
+
+        REQUIRE(rw1.readLine(s) == true);
+        REQUIRE(s == "hello, move");
     }
 
     REQUIRE(tfile::read(testFilename) == "hello, three");
@@ -104,4 +107,37 @@ TEST_CASE("file size gets two buffers larger in read", "[much larger file]") {
     tfile::write(testFilename, "much much much much much much much too long");
     auto s = tfile::testableRead(testFilename, [] (const char*) { return 8; });
     REQUIRE(s == "much much much much much much much too long");
+}
+
+TEST_CASE("readLine linux", "[readLine linux]") {
+    FileDeleter d1{testFilename};
+
+    tfile::write(testFilename, "line1\nl\rine2\r\nline3");
+
+    tfile::Reader reader(testFilename);
+    std::vector<std::string> lines;
+    std::string line;
+    while (readLineLinux(reader, line))
+        lines.push_back(line);
+
+    CHECK(lines.size() == 3);
+    REQUIRE(lines[0] == "line1");
+    REQUIRE(lines[1] == "l\rine2\r");
+    REQUIRE(lines[2] == "line3");
+}
+
+TEST_CASE("readLine windows", "[readLine windows]") {
+    FileDeleter d1{testFilename};
+
+    tfile::write(testFilename, "line1\nl\rine2\r\nline3");
+
+    tfile::Reader reader(testFilename);
+    std::vector<std::string> lines;
+    std::string line;
+    while (readLineWindows(reader, line))
+        lines.push_back(line);
+
+    CHECK(lines.size() == 2);
+    REQUIRE(lines[0] == "line1\nl\rine2");
+    REQUIRE(lines[1] == "line3");
 }

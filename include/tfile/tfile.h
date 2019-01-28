@@ -10,6 +10,10 @@
 #include <stdexcept>
 #endif
 
+#ifndef TFILE_WINDOWS
+#define TFILE_WINDOW defined(_WIN32)
+#endif
+
 namespace tfile {
 
 /** Read an entire file in and return it as a string. */
@@ -71,11 +75,9 @@ Examples of usage:
   tfile::Appender("myfile2.txt").write("a new line\n");
   // tfile::Appender("myfile2.txt").read();  // won't compile
 
-  while (true) {
-      auto line = reader.readLine();
-      if (line.empty())
-          break;
-      // ...
+  std::string line;
+  while (reader.readLine(line)) {
+     //
   }
 */
 
@@ -141,8 +143,24 @@ class ReaderBase : public OpenerBase {
     size_t read(std::string& s);
     std::string read(size_t size);
 
-    /** Reads a single line from the file. */
-    std::string readLine();
+    /** Reads a single line from the file, discarding trailing \r\n on Windows
+        or \n elsewhere */
+    bool readLine(std::string&);
+
+    /** Apply a function to each line */
+    template <typename Function>
+    void forEachLine(Function);
+
+    /** Read lines into a container */
+    template <typename Container>
+    void readLines(Container&);
+
+    template <typename Container = std::vector<std::string>>
+    Container readLines();
+
+    /** Fill an iterator with successive lines */
+    template <typename ForwardIt>
+    void fillLines(ForwardIt);
 };
 
 /** Base class for all writers, written as a mix-in so we can have
@@ -154,11 +172,25 @@ class WriterMixIn : public Base {
 
     size_t write(const char* data, size_t length);
     size_t write(const char* data);
-    size_t write(const std::string& s);
+    size_t write(const std::string&);
+
+    /** Write a single line, adding line endings */
+    size_t writeLine(const std::string&);
+
+    /** Write an iterator of lines with line endings */
+    template <typename ForwardIt>
+    size_t writeLines(ForwardIt begin, ForwardIt end) {
+        size_t size = 0;
+        for (; begin != end; ++begin)
+            size += writeLine(*begin);
+        return size;
+    }
 };
 
 using WriterBase = WriterMixIn<OpenerBase>;
 using ReaderWriterBase = WriterMixIn<ReaderBase>;
+
+const char* lineEnding();
 
 //
 // Implementation details follow
@@ -218,21 +250,90 @@ std::string ReaderBase::read(size_t size) {
     return result;
 }
 
-/**
-   Reads a single line from a file.
- */
-inline
-std::string ReaderBase::readLine() {
-    std::string line;
-    char ch = '\0';
+template <typename Reader>
+bool readLineLinux(Reader& reader, std::string& line) {
+    bool empty = true;
+    line.resize(0);
+
     while (true) {
-        auto len = read(&ch, 1);
-        if (not len or ch == '\n')
-            break;
-        if (ch != '\r')
-            line += ch;
+        char ch;
+        auto len = reader.read(&ch, 1);
+        if (not len)
+            return not empty;
+        if (ch == '\n')
+            return true;
+        empty = false;
+        line += ch;
     }
-    return line;
+}
+
+template <typename Reader>
+bool readLineWindows(Reader& reader, std::string& line) {
+    bool empty = true, wasCarriageReturn = false;
+    line.resize(0);
+
+    while (true) {
+        char ch;
+        auto len = reader.read(&ch, 1);
+        if (not len) {
+            if (not wasCarriageReturn)
+                return not empty;
+            line += '\r';
+            return true;
+        }
+
+        if (ch == '\n') {
+            if (wasCarriageReturn)
+                return true;
+            line += ch;
+        } else {
+            if (wasCarriageReturn) {
+                line += '\r';
+                wasCarriageReturn = false;
+            }
+            if (ch == '\r') {
+                wasCarriageReturn = true;
+            } else {
+                empty = false;
+                line += ch;
+            }
+        }
+    }
+}
+
+inline
+bool ReaderBase::readLine(std::string& line) {
+#if TFILE_WINDOWS
+    return readLineWindows(*this, line);
+#else
+    return readLineLinux(*this, line);
+#endif
+}
+
+template <typename Function>
+void ReaderBase::forEachLine(Function f) {
+    std::string s;
+    while (readLine(s))
+        f(s);
+}
+
+template <typename Container>
+void ReaderBase::readLines(Container& c) {
+    fillLines(std::back_inserter(c));
+}
+
+template <typename Container>
+Container ReaderBase::readLines() {
+    Container c;
+    readLines(c);
+    return c;
+}
+
+template <typename ForwardIt>
+void ReaderBase::fillLines(ForwardIt begin) {
+    std::string s;
+    while (readLine(s))
+        *begin = s;
 }
 
 template <typename Base>
@@ -248,6 +349,11 @@ size_t WriterMixIn<Base>::write(const char* data) {
 template <typename Base>
 size_t WriterMixIn<Base>::write(const std::string& s) {
     return write(s.data(), s.size());
+}
+
+template <typename Base>
+size_t WriterMixIn<Base>::writeLine(const std::string& s) {
+    return write(s) + write(lineEnding());
 }
 
 template <Mode>
@@ -353,12 +459,20 @@ size_t write(const char* filename, const std::string& s) {
     return write(filename, s.data(), s.size());
 }
 
-
 inline
 size_t size(const char* filename) {
     // From http://stackoverflow.com/questions/5840148
     std::ifstream in(filename, std::ifstream::ate | std::ifstream::binary);
     return in.tellg();
+}
+
+inline
+const char* lineEnding() {
+#if TFILE_WINDOWS
+    return "\r\n";
+#else
+    return "\n";
+#endif
 }
 
 }  // namespace tfile {
