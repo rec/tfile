@@ -120,7 +120,7 @@ TEST_CASE("readLine linux", "[readLine linux]") {
     while (readLineLinux(reader, line))
         lines.push_back(line);
 
-    CHECK(lines.size() == 3);
+    REQUIRE(lines.size() == 3);
     REQUIRE(lines[0] == "line1");
     REQUIRE(lines[1] == "l\rine2\r");
     REQUIRE(lines[2] == "line3");
@@ -128,7 +128,6 @@ TEST_CASE("readLine linux", "[readLine linux]") {
 
 TEST_CASE("readLine windows", "[readLine windows]") {
     FileDeleter d1{testFilename};
-
     tfile::write(testFilename, "line1\nl\rine2\r\nline3");
 
     tfile::Reader reader(testFilename);
@@ -137,7 +136,48 @@ TEST_CASE("readLine windows", "[readLine windows]") {
     while (readLineWindows(reader, line))
         lines.push_back(line);
 
-    CHECK(lines.size() == 2);
+    REQUIRE(lines.size() == 2);
     REQUIRE(lines[0] == "line1\nl\rine2");
     REQUIRE(lines[1] == "line3");
+}
+
+TEST_CASE("line iteration", "[line iteration]") {
+    FileDeleter d1{testFilename};
+    tfile::writeLines(testFilename, {"hello", "world", ""});
+
+ auto lines = tfile::Reader(testFilename).readLines();
+    REQUIRE(lines.size() == 3);
+    REQUIRE(lines[0] == "hello");
+    REQUIRE(lines[1] == "world");
+    REQUIRE(lines[2] == "");
+}
+
+TEST_CASE("line iteration2", "[line iteration2]") {
+    FileDeleter d1{testFilename};
+    tfile::writeLines(testFilename, {"hello", "world", ""});
+
+    std::vector<std::string> lines;
+    tfile::Reader(testFilename).fillLines(std::back_inserter(lines));
+    REQUIRE(lines.size() == 3);
+    REQUIRE(lines[0] == "hello");
+    REQUIRE(lines[1] == "world");
+    REQUIRE(lines[2] == "");
+}
+
+TEST_CASE("line iteration3", "[line iteration3]") {
+    FileDeleter d1{testFilename};
+    tfile::writeLines(testFilename, {"hello", "world", ""});
+
+    int i = 0;
+    tfile::Reader(testFilename).forEachLine([&](std::string s) {
+        if (++i == 1) {
+            REQUIRE(s == "hello");
+        } else if (i == 2) {
+            REQUIRE(s == "world");
+        } else if (i == 3) {
+            REQUIRE(s == "");
+        } else {
+            REQUIRE(false);
+        }
+    });
 }

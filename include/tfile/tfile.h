@@ -21,12 +21,14 @@ std::string read(const char* filename);
 
 /** Write an entire file at once. */
 size_t write(const char* filename, const char* data, size_t length);
-
-/** Write an entire file at once from a null-terminated string. */
-size_t write(const char* filename, const char* data);
-
-/** Write an entire file at once. */
+size_t write(const char* filename, const char* data);  // null-terminated
 size_t write(const char* filename, const std::string& s);
+
+template <typename Container = std::vector<std::string>>
+size_t writeLines(const char* filename, Container);
+
+template <typename ForwardIt>
+size_t writeLines(const char* filename, ForwardIt begin, ForwardIt end);
 
 /** Return the size in bytes of a file. */
 size_t size(const char* filename);
@@ -138,7 +140,6 @@ class ReaderBase : public OpenerBase {
   public:
     using OpenerBase::OpenerBase;
 
-
     size_t read(char* data, size_t length);
     size_t read(std::string& s);
     std::string read(size_t size);
@@ -184,6 +185,14 @@ class WriterMixIn : public Base {
         for (; begin != end; ++begin)
             size += writeLine(*begin);
         return size;
+    }
+
+    /** Write a container of lines */
+    template <typename Container>
+    size_t writeLines(Container c) {
+        using std::begin;
+        using std::end;
+        this->writeLines(begin(c), end(c));
     }
 };
 
@@ -457,6 +466,22 @@ size_t write(const char* filename, const char* data) {
 inline
 size_t write(const char* filename, const std::string& s) {
     return write(filename, s.data(), s.size());
+}
+
+template <typename Container>
+size_t writeLines(const char* filename, Container c) {
+    using std::begin;
+    using std::end;
+    return writeLines(filename, begin(c), end(c));
+}
+
+template <typename ForwardIt>
+size_t writeLines(const char* filename, ForwardIt begin, ForwardIt end) {
+    size_t bytes = 0;
+    Writer writer(filename);
+    for (; begin != end; ++begin)
+        bytes += writer.write(*begin) + writer.write(lineEnding());
+    return bytes;
 }
 
 inline
