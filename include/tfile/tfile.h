@@ -120,7 +120,11 @@ class OpenerBase {
     */
     int seek(off_t offset, int whence = SEEK_SET);
 
-    /** Return true if the file is non-empty and closed. */
+    /** Return true if the file is non-empty and closed.
+
+        See https://stackoverflow.com/questions/5431941 for potential
+        traps with this method.
+     */
     bool eof() const { return file_ && feof(file_); }
 
   protected:
@@ -317,11 +321,13 @@ std::string testableRead(const char* filename, SizeFunction size) {
     Reader reader(filename);
     result.resize(reader.read(result));
 
-    while (!reader.eof()) {
+    while (true) {
         static const auto BUFFER_SIZE = 16;
         char buffer[BUFFER_SIZE];
         if (auto bytes = reader.read(buffer, BUFFER_SIZE))
             result.insert(result.end(), buffer, buffer + bytes);
+        else
+            break;
     }
 
     return result;
