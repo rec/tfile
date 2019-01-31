@@ -187,9 +187,9 @@ class WriterMixIn : public Base {
         return size;
     }
 
-    /** Write a container of lines */
+    /** Write a container of lines, adding line endings */
     template <typename Container>
-    size_t writeLines(Container c) {
+    size_t writeLines(const Container& c) {
         using std::begin;
         using std::end;
         this->writeLines(begin(c), end(c));
@@ -374,37 +374,37 @@ struct OpenerTraits {
 template <>
 struct OpenerTraits<Mode::read> {
     using Opener = ReaderBase;
-    static const char* const mode() { return "r";}
+    static const char* const mode() { return "r"; }
 };
 
 template <>
 struct OpenerTraits<Mode::readWrite> {
     using Opener = ReaderWriterBase;
-    static const char* const mode() { return "r+";}
+    static const char* const mode() { return "r+"; }
 };
 
 template <>
 struct OpenerTraits<Mode::write> {
     using Opener = WriterBase;
-    static const char* const mode() { return "w";}
+    static const char* const mode() { return "w"; }
 };
 
 template <>
 struct OpenerTraits<Mode::truncate> {
     using Opener = ReaderWriterBase;
-    static const char* const mode() { return "w+";}
+    static const char* const mode() { return "w+"; }
 };
 
 template <>
 struct OpenerTraits<Mode::append> {
     using Opener = WriterBase;
-    static const char* const mode() { return "a";}
+    static const char* const mode() { return "a"; }
 };
 
 template <>
 struct OpenerTraits<Mode::readAppend> {
     using Opener = ReaderWriterBase;
-    static const char* const mode() { return "a+";}
+    static const char* const mode() { return "a+"; }
 };
 
 template <Mode MODE>

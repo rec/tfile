@@ -181,3 +181,35 @@ TEST_CASE("line iteration3", "[line iteration3]") {
         }
     });
 }
+
+namespace tfile {
+namespace test {
+
+struct Base {
+    int name = 0;
+};
+
+struct D1 : Base {
+    D1() { name = 1; }
+    int get1() const { return name; }
+};
+
+struct D2 : Base {
+    D2() { name = 2; }
+    int get2() const { return name; }
+};
+
+struct D3 : D2, D1 {
+    D3() : D2(), D1() {}
+};
+
+}  // test
+}  // tfile
+
+TEST_CASE("multiple inheritance", "[multiple inheritance]") {
+    // Test to show the diamond problem
+    // https://www.reddit.com/r/cpp/comments/aiprv9/tiny_file_utilities/effhohr/
+    tfile::test::D3 d3;
+    REQUIRE(d3.get1() == 1);
+    REQUIRE(d3.get2() == 2);
+}
