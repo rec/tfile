@@ -69,18 +69,31 @@ http://man7.org/linux/man-pages/man3/fopen.3.html
 
 Examples of usage:
 
-  tfile::Reader reader("myfile2.txt");
-  std::string s(10);
-  auto bytes_read = reader.read(s);   // at most 10
-  // reader.write("hello");  // Won't compile
+    tfile::Reader reader("myfile2.txt");
+    std::string s(10);
+    auto bytes_read = reader.read(s);   // at most 10
 
-  tfile::Appender("myfile2.txt").write("a new line\n");
-  // tfile::Appender("myfile2.txt").read();  // won't compile
+    // You can't write a reader, so this won't compile:
+    // reader.write("hello");
 
-  std::string line;
-  while (reader.readLine(line)) {
-     //
-  }
+    // Open a file, appear a line, close it.
+    tfile::Appender("myfile2.txt").writeLine("a new line");
+
+    // You can't read an Appender, so this won't compile:
+    // tfile::Appender("myfile2.txt").read();
+
+    // Iterate through lines.
+
+    std::string line;
+    while (reader.readLine(line)) {
+       // Do things to `line` here
+    }
+
+    // Another way to do that:
+
+    reader.forEachLine([] (const std::string& line) {
+        // Do things to `line` here
+    });
 */
 
 enum class Mode {read, readWrite, write, truncate, append, readAppend};
@@ -188,8 +201,8 @@ class WriterMixIn : public Base {
     }
 
     /** Write a container of lines, adding line endings */
-    template <typename Container>
-    size_t writeLines(const Container& c) {
+    template <typename Container = std::vector<std::string>>
+    size_t writeLines(Container c) {
         using std::begin;
         using std::end;
         this->writeLines(begin(c), end(c));
