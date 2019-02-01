@@ -85,28 +85,31 @@ TEST_CASE("move semantics", "[move]") {
     REQUIRE(tfile::read(testFilename2) == "hello, move");
 }
 
+std::string testableRead(size_t size = 8) {
+    std::string s;
+    tfile::testableRead(testFilename, s, [=] (const char*) { return size; });
+    return s;
+}
+
 TEST_CASE("file size gets smaller in read", "[smaller file]") {
     FileDeleter d1{testFilename};
 
     tfile::write(testFilename, "short");
-    auto s = tfile::testableRead(testFilename, [] (const char*) { return 8; });
-    REQUIRE(s == "short");
+    REQUIRE(testableRead() == "short");
 }
 
 TEST_CASE("file size gets larger in read", "[larger file]") {
     FileDeleter d1{testFilename};
 
     tfile::write(testFilename, "much too long");
-    auto s = tfile::testableRead(testFilename, [] (const char*) { return 8; });
-    REQUIRE(s == "much too long");
+    REQUIRE(testableRead() == "much too long");
 }
 
 TEST_CASE("file size gets two buffers larger in read", "[much larger file]") {
     FileDeleter d1{testFilename};
 
     tfile::write(testFilename, "much much much much much much much too long");
-    auto s = tfile::testableRead(testFilename, [] (const char*) { return 8; });
-    REQUIRE(s == "much much much much much much much too long");
+    REQUIRE(testableRead() == "much much much much much much much too long");
 }
 
 TEST_CASE("readLine linux", "[readLine linux]") {

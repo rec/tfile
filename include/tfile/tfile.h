@@ -16,6 +16,11 @@
 
 namespace tfile {
 
+// Functions to read and write a file all at once
+
+/** Read an entire file into a string. */
+void read(const char* filename, std::string&);
+
 /** Read an entire file in and return it as a string. */
 std::string read(const char* filename);
 
@@ -24,9 +29,31 @@ size_t write(const char* filename, const char* data, size_t length);
 size_t write(const char* filename, const char* data);  // null-terminated
 size_t write(const char* filename, const std::string& s);
 
-template <typename Container = std::vector<std::string>>
+// Functions to read and write lines.
+// The line-endings depend on the platform, are removed
+// on read, and added back on write
+
+const char* lineEnding();
+
+using Lines = std::vector<std::string>;
+
+/** Read all the lines of a file into a container. */
+template <typename Container = Lines>
+void readLines(const char* filename, Container& c);
+
+/** Read all the lines of a file and return as a container. */
+template <typename Container = Lines>
+Container readLines(const char* filename);
+
+/** Call a function for each line in a file */
+template <typename Function>
+void forEachLine(const char* filename, Function);
+
+/** Write all the lines in a container over a file */
+template <typename Container = Lines>
 size_t writeLines(const char* filename, Container);
 
+/** Write all the lines in a range over a file */
 template <typename ForwardIt>
 size_t writeLines(const char* filename, ForwardIt begin, ForwardIt end);
 
@@ -98,6 +125,9 @@ Examples of usage:
 
 enum class Mode {read, readWrite, write, truncate, append, readAppend};
 
+template <Mode> const char* modeString();
+const char* modeString(Mode);
+
 template <Mode>
 class Opener;
 
@@ -108,15 +138,16 @@ using TruncateReaderWriter = Opener<Mode::truncate>;
 using Appender = Opener<Mode::append>;
 using ReaderAppender = Opener<Mode::readAppend>;
 
-/** OpenerBase class for all openers. */
-class OpenerBase {
+/** Wraps a file, with mixins for reading or writing */
+template <template <typename> class ... Mixins>
+class FileHandle : public Mixins<FileHandle<Mixins...>>... {
   public:
     explicit
-    OpenerBase(FILE* file = nullptr) : file_(file) {}
+    FileHandle(FILE* file = nullptr) : file_(file) {}
 
     explicit
-    OpenerBase(const char* filename, const char* mode);
-    ~OpenerBase() { close(); }
+    FileHandle(const char* filename, const char* mode);
+    ~FileHandle() { close(); }
 
     /** Get the current FILE* */
     FILE* get() { return file_; }
@@ -144,15 +175,14 @@ class OpenerBase {
      */
     bool eof() const { return file_ && feof(file_); }
 
-  protected:
+  private:
     FILE* file_;
 };
 
-/** Base class for all Readers. */
-class ReaderBase : public OpenerBase {
+/** Reader Mixin */
+template <typename Derived>
+class ReaderMixin {
   public:
-    using OpenerBase::OpenerBase;
-
     size_t read(char* data, size_t length);
     size_t read(std::string& s);
     std::string read(size_t size);
@@ -161,29 +191,41 @@ class ReaderBase : public OpenerBase {
         or \n elsewhere */
     bool readLine(std::string&);
 
+    template <typename InserterIt>
+    void fillLines(InserterIt begin) {
+        std::string s;
+        while (readLine(s))
+            *begin = s;
+    }
+
     /** Apply a function to each line */
     template <typename Function>
-    void forEachLine(Function);
+    void forEachLine(Function f) {
+        std::string s;
+        while (readLine(s))
+            f(s);
+    }
 
     /** Read lines into a container */
     template <typename Container>
-    void readLines(Container&);
+    void readLines(Container& c) {
+        fillLines(std::back_inserter(c));
+    }
 
-    template <typename Container = std::vector<std::string>>
-    Container readLines();
+    template <typename Container = Lines>
+    Container readLines() {
+        Container c;
+        readLines(c);
+        return c;
+    }
 
-    /** Fill an iterator with successive lines */
-    template <typename ForwardIt>
-    void fillLines(ForwardIt);
+    FILE* get() { return static_cast<Derived*>(this)->get(); }
 };
 
-/** Base class for all writers, written as a mix-in so we can have
-    ReaderWriters */
-template <typename Base>
-class WriterMixIn : public Base {
+/** Writer Mixin */
+template <typename Derived>
+class WriterMixin {
   public:
-    using Base::Base;
-
     size_t write(const char* data, size_t length);
     size_t write(const char* data);
     size_t write(const std::string&);
@@ -201,25 +243,22 @@ class WriterMixIn : public Base {
     }
 
     /** Write a container of lines, adding line endings */
-    template <typename Container = std::vector<std::string>>
+    template <typename Container = Lines>
     size_t writeLines(Container c) {
         using std::begin;
         using std::end;
-        this->writeLines(begin(c), end(c));
+        return this->writeLines(begin(c), end(c));
     }
+
+    FILE* get() { return static_cast<Derived*>(this)->get(); }
 };
-
-using WriterBase = WriterMixIn<OpenerBase>;
-using ReaderWriterBase = WriterMixIn<ReaderBase>;
-
-const char* lineEnding();
 
 //
 // Implementation details follow
 //
 
-inline
-OpenerBase::OpenerBase(const char* filename, const char* mode)
+template <template <typename> class ... Mixins>
+FileHandle<Mixins...>::FileHandle(const char* filename, const char* mode)
         : file_(fopen(filename, mode)) {
 #ifdef __cpp_exceptions
     if (not file_)
@@ -227,8 +266,8 @@ OpenerBase::OpenerBase(const char* filename, const char* mode)
 #endif
 }
 
-inline
-int OpenerBase::close() {
+template <template <typename> class ... Mixins>
+int FileHandle<Mixins...>::close() {
     int result = 0;
     if (file_) {
         result = fclose(file_);
@@ -237,36 +276,36 @@ int OpenerBase::close() {
     return result;
 }
 
-inline
-void OpenerBase::set(FILE* file) {
+template <template <typename> class ... Mixins>
+void FileHandle<Mixins...>::set(FILE* file) {
     close();
     file_ = file;
 }
 
-inline
-FILE* OpenerBase::release() {
+template <template <typename> class ... Mixins>
+FILE* FileHandle<Mixins...>::release() {
     auto f = file_;
     file_ = nullptr;
     return f;
 }
 
-inline
-int OpenerBase::seek(off_t offset, int whence) {
+template <template <typename> class ... Mixins>
+int FileHandle<Mixins...>::seek(off_t offset, int whence) {
     return fseeko(file_, offset, whence);
 }
 
-inline
-size_t ReaderBase::read(char* data, size_t length) {
-    return fread(data, 1, length, file_);
+template <typename Derived>
+size_t ReaderMixin<Derived>::read(char* data, size_t length) {
+    return fread(data, 1, length, get());
 }
 
-inline
-size_t ReaderBase::read(std::string& s) {
+template <typename Derived>
+size_t ReaderMixin<Derived>::read(std::string& s) {
     return read(&s[0], s.size());
 }
 
-inline
-std::string ReaderBase::read(size_t size) {
+template <typename Derived>
+std::string ReaderMixin<Derived>::read(size_t size) {
     std::string result(size, '\0');
     result.resize(read(result));
     return result;
@@ -323,8 +362,8 @@ bool readLineWindows(Reader& reader, std::string& line) {
     }
 }
 
-inline
-bool ReaderBase::readLine(std::string& line) {
+template <typename Derived>
+bool ReaderMixin<Derived>::readLine(std::string& line) {
 #if TFILE_WINDOWS
     return readLineWindows(*this, line);
 #else
@@ -332,103 +371,57 @@ bool ReaderBase::readLine(std::string& line) {
 #endif
 }
 
-template <typename Function>
-void ReaderBase::forEachLine(Function f) {
-    std::string s;
-    while (readLine(s))
-        f(s);
+template <typename Derived>
+size_t WriterMixin<Derived>::write(const char* data, size_t length) {
+    return fwrite(data, 1, length, get());
 }
 
-template <typename Container>
-void ReaderBase::readLines(Container& c) {
-    fillLines(std::back_inserter(c));
-}
-
-template <typename Container>
-Container ReaderBase::readLines() {
-    Container c;
-    readLines(c);
-    return c;
-}
-
-template <typename ForwardIt>
-void ReaderBase::fillLines(ForwardIt begin) {
-    std::string s;
-    while (readLine(s))
-        *begin = s;
-}
-
-template <typename Base>
-size_t WriterMixIn<Base>::write(const char* data, size_t length) {
-    return fwrite(data, 1, length, this->file_);
-}
-
-template <typename Base>
-size_t WriterMixIn<Base>::write(const char* data) {
+template <typename Derived>
+size_t WriterMixin<Derived>::write(const char* data) {
     return write(data, strlen(data));
 }
 
-template <typename Base>
-size_t WriterMixIn<Base>::write(const std::string& s) {
+template <typename Derived>
+size_t WriterMixin<Derived>::write(const std::string& s) {
     return write(s.data(), s.size());
 }
 
-template <typename Base>
-size_t WriterMixIn<Base>::writeLine(const std::string& s) {
+template <typename Derived>
+size_t WriterMixin<Derived>::writeLine(const std::string& s) {
     return write(s) + write(lineEnding());
 }
 
+using ReaderBase = FileHandle<ReaderMixin>;
+using WriterBase = FileHandle<WriterMixin>;
+using ReaderWriterBase = FileHandle<ReaderMixin, WriterMixin>;
+
+template <> const char* modeString<Mode::read>() { return "r"; }
+template <> const char* modeString<Mode::readWrite>() { return "r+"; }
+template <> const char* modeString<Mode::write>() { return "w"; }
+template <> const char* modeString<Mode::truncate>() { return "w+"; }
+template <> const char* modeString<Mode::append>() { return "a"; }
+template <> const char* modeString<Mode::readAppend>() { return "a+"; }
+
 template <Mode>
-struct OpenerTraits {
-    struct Opener;
-    static const char* const mode();
+struct Traits {
+    struct Base;
 };
 
-template <>
-struct OpenerTraits<Mode::read> {
-    using Opener = ReaderBase;
-    static const char* const mode() { return "r"; }
-};
-
-template <>
-struct OpenerTraits<Mode::readWrite> {
-    using Opener = ReaderWriterBase;
-    static const char* const mode() { return "r+"; }
-};
-
-template <>
-struct OpenerTraits<Mode::write> {
-    using Opener = WriterBase;
-    static const char* const mode() { return "w"; }
-};
-
-template <>
-struct OpenerTraits<Mode::truncate> {
-    using Opener = ReaderWriterBase;
-    static const char* const mode() { return "w+"; }
-};
-
-template <>
-struct OpenerTraits<Mode::append> {
-    using Opener = WriterBase;
-    static const char* const mode() { return "a"; }
-};
-
-template <>
-struct OpenerTraits<Mode::readAppend> {
-    using Opener = ReaderWriterBase;
-    static const char* const mode() { return "a+"; }
-};
+template <> struct Traits<Mode::read> { using Base = ReaderBase; };
+template <> struct Traits<Mode::readWrite> { using Base = ReaderWriterBase; };
+template <> struct Traits<Mode::write> { using Base = WriterBase; };
+template <> struct Traits<Mode::truncate> { using Base = ReaderWriterBase; };
+template <> struct Traits<Mode::append> { using Base = WriterBase; };
+template <> struct Traits<Mode::readAppend> { using Base = ReaderWriterBase; };
 
 template <Mode MODE>
-class Opener : public OpenerTraits<MODE>::Opener {
+class Opener : public Traits<MODE>::Base {
   public:
-    using Traits = OpenerTraits<MODE>;
-    using Base = typename Traits::Opener;
+    using Base = typename Traits<MODE>::Base;
 
     Opener() {}
 
-    explicit Opener(const char* filename) : Base(filename, Traits::mode()) {}
+    explicit Opener(const char* filename) : Base(filename, modeString<MODE>()) {}
     explicit Opener(Opener&& other) noexcept : Base(other.release()) {}
     Opener(const Opener&) = delete;
 
@@ -441,29 +434,36 @@ class Opener : public OpenerTraits<MODE>::Opener {
 };
 
 template <typename SizeFunction>
-std::string testableRead(const char* filename, SizeFunction size) {
+void testableRead(const char* filename, std::string& s, SizeFunction size) {
     // The file size might change between getting the size and reading it: see
     // https://www.reddit.com/r/cpp/comments/aiprv9/tiny_file_utilities/eerbyza/
 
-    std::string result(size(filename), '\0');
+    s.resize(size(filename));
+
     Reader reader(filename);
-    result.resize(reader.read(result));
+    s.resize(reader.read(s));
 
     while (true) {
         static const auto BUFFER_SIZE = 16;
         char buffer[BUFFER_SIZE];
         if (auto bytes = reader.read(buffer, BUFFER_SIZE))
-            result.insert(result.end(), buffer, buffer + bytes);
+            s.insert(s.end(), buffer, buffer + bytes);
         else
             break;
     }
-
-    return result;
 }
 
 inline
+void read(const char* filename, std::string& s) {
+    testableRead(filename, s, size);
+}
+
+
+inline
 std::string read(const char* filename) {
-    return testableRead(filename, size);
+    std::string s;
+    read(filename, s);
+    return s;
 }
 
 inline
@@ -481,20 +481,32 @@ size_t write(const char* filename, const std::string& s) {
     return write(filename, s.data(), s.size());
 }
 
+/** Read all the lines of a file into a container. */
+template <typename Container>
+void readLines(const char* filename, Container& c) {
+    Reader(filename).readLines(c);
+}
+
+/** Read all the lines of a file and return as a container. */
+template <typename Container>
+Container readLines(const char* filename) {
+    return Reader(filename).readLines<Container>();
+}
+
+/** Call a function for each line in a file */
+template <typename Function>
+void forEachLine(const char* filename, Function f) {
+    return Reader(filename).forEachLine(f);
+}
+
 template <typename Container>
 size_t writeLines(const char* filename, Container c) {
-    using std::begin;
-    using std::end;
-    return writeLines(filename, begin(c), end(c));
+    return Writer(filename).writeLines(c);
 }
 
 template <typename ForwardIt>
 size_t writeLines(const char* filename, ForwardIt begin, ForwardIt end) {
-    size_t bytes = 0;
-    Writer writer(filename);
-    for (; begin != end; ++begin)
-        bytes += writer.write(*begin) + writer.write(lineEnding());
-    return bytes;
+    return Writer(filename).writeLines(begin, end);
 }
 
 inline
@@ -513,4 +525,4 @@ const char* lineEnding() {
 #endif
 }
 
-}  // namespace tfile {
+}  // namespace tfile
