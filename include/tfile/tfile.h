@@ -5,60 +5,41 @@
 
 #include <fstream>
 #include <string>
+#include <vector>
 
 #ifdef __cpp_exceptions
 #include <stdexcept>
 #endif
 
-#ifndef TFILE_WINDOWS
-#define TFILE_WINDOW defined(_WIN32)
-#endif
-
 namespace tfile {
 
-// Functions to read and write a file all at once
+/** Return the size in bytes of a file. */
+size_t size(const char* filename);
 
 /** Read an entire file into a string. */
 void read(const char* filename, std::string&);
 
-/** Read an entire file in and return it as a string. */
+/** Read an entire file in and return it as a strings. */
 std::string read(const char* filename);
 
-/** Write an entire file at once. */
+using Lines = std::vector<std::string>;
+
+/** Read a file into a vector of strings with the platform's line-endings */
+Lines readLines(const char* filename);
+void readLines(const char* filename, Lines&);
+
+/** Write an entire file at once */
 size_t write(const char* filename, const char* data, size_t length);
 size_t write(const char* filename, const char* data);  // null-terminated
 size_t write(const char* filename, const std::string& s);
 
-// Functions to read and write lines.
-// The line-endings depend on the platform, are removed
-// on read, and added back on write
-
-const char* lineEnding();
-
-using Lines = std::vector<std::string>;
-
-/** Read all the lines of a file into a container. */
-template <typename Container = Lines>
-void readLines(const char* filename, Container& c);
-
-/** Read all the lines of a file and return as a container. */
-template <typename Container = Lines>
-Container readLines(const char* filename);
-
-/** Call a function for each line in a file */
-template <typename Function>
-void forEachLine(const char* filename, Function);
-
-/** Write all the lines in a container over a file */
+/** Write a container of strings with the platform's line-endings */
 template <typename Container = Lines>
 size_t writeLines(const char* filename, Container);
 
-/** Write all the lines in a range over a file */
+/** Write a range of strings with the platform's line-endings */
 template <typename ForwardIt>
 size_t writeLines(const char* filename, ForwardIt begin, ForwardIt end);
-
-/** Return the size in bytes of a file. */
-size_t size(const char* filename);
 
 /*
 File Openers
@@ -138,6 +119,34 @@ using TruncateReaderWriter = Opener<Mode::truncate>;
 using Appender = Opener<Mode::append>;
 using ReaderAppender = Opener<Mode::readAppend>;
 
+#ifndef TFILE_SYSTEM_NEWLINE
+  #ifdef _WIN32
+    #define TFILE_SYSTEM_NEWLINE windows
+  #else
+    #define TFILE_SYSTEM_NEWLINE unix
+  #endif
+#endif
+
+/** See https://en.wikipedia.org/wiki/Newline */
+enum class Newline {
+    cr_lf,  // Windows
+    lf,     // Unix and MacOS
+
+    atari8,
+    cr,
+    lf_cr,
+    nl,
+    rs,
+    zx8x,
+    unix = lf,
+    windows = cr_lf,
+    ibm = nl,
+    system = TFILE_SYSTEM_NEWLINE
+};
+
+template <Newline = Newline::system>
+const char* newlineString();
+
 /** Wraps a file, with mixins for reading or writing */
 template <template <typename> class ... Mixins>
 class FileHandle : public Mixins<FileHandle<Mixins...>>... {
@@ -179,78 +188,91 @@ class FileHandle : public Mixins<FileHandle<Mixins...>>... {
     FILE* file_;
 };
 
-/** Reader Mixin */
+template <Newline NL, typename Reader> class LineReader;
+template <Newline NL, typename Writer> class LineWriter;
+
+/** Base for all Readers */
 template <typename Derived>
-class ReaderMixin {
+class ReaderBase {
   public:
     size_t read(char* data, size_t length);
     size_t read(std::string& s);
     std::string read(size_t size);
 
-    /** Reads a single line from the file, discarding trailing \r\n on Windows
-        or \n elsewhere */
-    bool readLine(std::string&);
+    /** Return a LineReader */
+    template <Newline NL = Newline::system>
+    LineReader<NL, ReaderBase> lines();
 
-    template <typename InserterIt>
-    void fillLines(InserterIt begin) {
-        std::string s;
-        while (readLine(s))
-            *begin = s;
-    }
-
-    /** Apply a function to each line */
-    template <typename Function>
-    void forEachLine(Function f) {
-        std::string s;
-        while (readLine(s))
-            f(s);
-    }
-
-    /** Read lines into a container */
-    template <typename Container>
-    void readLines(Container& c) {
-        fillLines(std::back_inserter(c));
-    }
-
-    template <typename Container = Lines>
-    Container readLines() {
-        Container c;
-        readLines(c);
-        return c;
-    }
-
-    FILE* get() { return static_cast<Derived*>(this)->get(); }
+    /** Return a LineReader - for use in ReaderWriters */
+    template <Newline NL = Newline::system>
+    LineReader<NL, ReaderBase> readLines();
 };
 
-/** Writer Mixin */
+/** Base for all Writerse */
 template <typename Derived>
-class WriterMixin {
+class WriterBase {
   public:
     size_t write(const char* data, size_t length);
     size_t write(const char* data);
     size_t write(const std::string&);
 
-    /** Write a single line, adding line endings */
-    size_t writeLine(const std::string&);
+    /** Return a LineWriter */
+    template <Newline NL = Newline::system>
+    LineWriter<NL, WriterBase> lines();
 
-    /** Write an iterator of lines with line endings */
-    template <typename ForwardIt>
-    size_t writeLines(ForwardIt begin, ForwardIt end) {
-        size_t size = 0;
-        for (; begin != end; ++begin)
-            size += writeLine(*begin);
-        return size;
-    }
+    /** Return a LineWriter - for use in ReaderWriters */
+    template <Newline NL = Newline::system>
+    LineWriter<NL, WriterBase> writeLines();
+};
 
-    /** Write a container of lines, adding line endings */
+/** Read lines from a reader, taking newlines into account */
+template <Newline NL, typename Reader>
+class LineReader {
+  public:
+    LineReader(Reader& reader) : reader_(reader) {}
+
+    /** Try to read a single line, return true if successful */
+    bool readOne(std::string&);
+
+    /** Apply a function to each line */
+    template <typename Function>
+    void forEach(Function);
+
+    /** Use each line to fill an insert iterator */
+    template <typename InserterIt>
+    void fill(InserterIt);
+
+    /** Read all lines into a container */
+    template <typename Container>
+    void read(Container&);
+
+    /** Read all lines and return a container */
     template <typename Container = Lines>
-    size_t writeLines(Container c) {
-        using std::begin;
-        using std::end;
-        return this->writeLines(begin(c), end(c));
-    }
+    Container read();
 
-    FILE* get() { return static_cast<Derived*>(this)->get(); }
+  private:
+    Reader& reader_;
+};
+
+/** Write lines to a writer, adding newlines */
+template <Newline NL, typename Writer>
+class LineWriter {
+  public:
+    LineWriter(Writer& writer) : writer_(writer) {}
+
+    /** Write a single line, return the number of bytes written */
+    size_t writeOne(const std::string&);
+
+    /** Write an iterator of lines with newlines */
+    template <typename ForwardIt>
+    size_t write(ForwardIt begin, ForwardIt end);
+
+    /** Write a container of lines, adding newlines */
+    template <typename Container = Lines>
+    size_t write(Container);
+
+  private:
+    Writer& writer_;
 };
 
 //
@@ -295,105 +317,177 @@ int FileHandle<Mixins...>::seek(off_t offset, int whence) {
 }
 
 template <typename Derived>
-size_t ReaderMixin<Derived>::read(char* data, size_t length) {
-    return fread(data, 1, length, get());
+size_t ReaderBase<Derived>::read(char* data, size_t length) {
+    auto fp = static_cast<Derived*>(this)->get();
+    return fread(data, 1, length, fp);
 }
 
 template <typename Derived>
-size_t ReaderMixin<Derived>::read(std::string& s) {
+size_t ReaderBase<Derived>::read(std::string& s) {
     return read(&s[0], s.size());
 }
 
 template <typename Derived>
-std::string ReaderMixin<Derived>::read(size_t size) {
+std::string ReaderBase<Derived>::read(size_t size) {
     std::string result(size, '\0');
     result.resize(read(result));
     return result;
 }
 
-template <typename Reader>
-bool readLineLinux(Reader& reader, std::string& line) {
+template <Newline NL, typename Reader>
+bool LineReader<NL, Reader>::readOne(std::string& line) {
+    static const auto newline = newlineString<NL>();
+    static const auto len = strlen(newline);
+
+    size_t seen = 0;  // How many characters have we seen in newline?
     bool empty = true;
     line.resize(0);
 
+    // Emit a partial newline if any
+    auto emitPartial = [&] () {
+        if (seen) {
+            for (size_t i = 0; i < seen; ++i)
+                line += newline[i];
+            seen = 0;
+        }
+    };
+
     while (true) {
         char ch;
-        auto len = reader.read(&ch, 1);
-        if (not len)
+        if (not reader_.read(&ch, 1)) {
+            emitPartial();
             return not empty;
-        if (ch == '\n')
-            return true;
+        }
+
         empty = false;
-        line += ch;
-    }
-}
-
-template <typename Reader>
-bool readLineWindows(Reader& reader, std::string& line) {
-    bool empty = true, wasCarriageReturn = false;
-    line.resize(0);
-
-    while (true) {
-        char ch;
-        auto len = reader.read(&ch, 1);
-        if (not len) {
-            if (not wasCarriageReturn)
-                return not empty;
-            line += '\r';
-            return true;
-        }
-
-        if (ch == '\n') {
-            if (wasCarriageReturn)
+        if (ch == newline[seen]) {
+            if (++seen >= len)
                 return true;
-            line += ch;
         } else {
-            if (wasCarriageReturn) {
-                line += '\r';
-                wasCarriageReturn = false;
-            }
-            if (ch == '\r') {
-                wasCarriageReturn = true;
-            } else {
-                empty = false;
-                line += ch;
-            }
+            emitPartial();
+            line += ch;
         }
     }
 }
 
-template <typename Derived>
-bool ReaderMixin<Derived>::readLine(std::string& line) {
-#if TFILE_WINDOWS
-    return readLineWindows(*this, line);
-#else
-    return readLineLinux(*this, line);
-#endif
+template <Newline NL, typename Reader>
+template <typename Function>
+void LineReader<NL, Reader>::forEach(Function f) {
+    std::string s;
+    while (readOne(s))
+        f(s);
+}
+
+template <Newline NL, typename Reader>
+template <typename InserterIt>
+void LineReader<NL, Reader>::fill(InserterIt begin) {
+    forEach([&] (const std::string& s) {
+        *begin = s;
+    });
+}
+
+template <Newline NL, typename Reader>
+template <typename Container>
+void LineReader<NL, Reader>::read(Container& c) {
+    fill(std::back_inserter(c));
+}
+
+template <Newline NL, typename Reader>
+template <typename Container>
+Container LineReader<NL, Reader>::read() {
+    Container c;
+    read(c);
+    return c;
 }
 
 template <typename Derived>
-size_t WriterMixin<Derived>::write(const char* data, size_t length) {
-    return fwrite(data, 1, length, get());
+template <Newline NL>
+LineReader<NL, ReaderBase<Derived>> ReaderBase<Derived>::lines() {
+    return {*this};
 }
 
 template <typename Derived>
-size_t WriterMixin<Derived>::write(const char* data) {
+template <Newline NL>
+LineReader<NL, ReaderBase<Derived>> ReaderBase<Derived>::readLines() {
+    return {*this};
+}
+
+template <Newline NL, typename Writer>
+size_t LineWriter<NL, Writer>::writeOne(const std::string& s) {
+    return writer_.write(s) + writer_.write(newlineString<NL>());
+}
+
+/** Write a container of lines, adding newlines */
+template <Newline NL, typename Writer>
+template <typename Container>
+size_t LineWriter<NL, Writer>::write(Container c) {
+    using std::begin;
+    using std::end;
+    return write(begin(c), end(c));
+}
+
+/** Write a container of lines, adding newlines */
+template <Newline NL, typename Writer>
+template <typename ForwardIt>
+size_t LineWriter<NL, Writer>::write(ForwardIt begin, ForwardIt end) {
+    size_t size = 0;
+    for (; begin != end; ++begin)
+        size += writeOne(*begin);
+    return size;
+}
+
+template <typename Derived>
+template <Newline NL>
+LineWriter<NL, WriterBase<Derived>> WriterBase<Derived>::lines() {
+    return {*this};
+}
+
+template <typename Derived>
+template <Newline NL>
+LineWriter<NL, WriterBase<Derived>> WriterBase<Derived>::writeLines() {
+    return {*this};
+}
+
+template <typename Derived>
+size_t WriterBase<Derived>::write(const char* data, size_t length) {
+    auto fp = static_cast<Derived*>(this)->get();
+    return fwrite(data, 1, length, fp);
+}
+
+template <typename Derived>
+size_t WriterBase<Derived>::write(const char* data) {
     return write(data, strlen(data));
 }
 
 template <typename Derived>
-size_t WriterMixin<Derived>::write(const std::string& s) {
+size_t WriterBase<Derived>::write(const std::string& s) {
     return write(s.data(), s.size());
 }
 
-template <typename Derived>
-size_t WriterMixin<Derived>::writeLine(const std::string& s) {
-    return write(s) + write(lineEnding());
-}
+template <Mode>
+struct Traits {
+    struct Base;
+};
 
-using ReaderBase = FileHandle<ReaderMixin>;
-using WriterBase = FileHandle<WriterMixin>;
-using ReaderWriterBase = FileHandle<ReaderMixin, WriterMixin>;
+using Read = FileHandle<ReaderBase>;
+using Write = FileHandle<WriterBase>;
+using ReadWrite = FileHandle<ReaderBase, WriterBase>;
+
+template <> struct Traits<Mode::read> { using Base = Read; };
+template <> struct Traits<Mode::readWrite> { using Base = ReadWrite; };
+template <> struct Traits<Mode::write> { using Base = Write; };
+template <> struct Traits<Mode::truncate> { using Base = ReadWrite; };
+template <> struct Traits<Mode::append> { using Base = Write; };
+template <> struct Traits<Mode::readAppend> { using Base = ReadWrite; };
+
+template <> const char* newlineString<Newline::atari8>() { return "\x9b"; }
+template <> const char* newlineString<Newline::cr>() { return "\r"; }
+template <> const char* newlineString<Newline::cr_lf>() { return "\r\n"; }
+template <> const char* newlineString<Newline::lf>() { return "\n"; }
+template <> const char* newlineString<Newline::lf_cr>() { return "\n\r"; }
+template <> const char* newlineString<Newline::nl>() { return "\x15"; }
+template <> const char* newlineString<Newline::rs>() { return "\x1e"; }
+template <> const char* newlineString<Newline::zx8x>() { return "\x76"; }
 
 template <> const char* modeString<Mode::read>() { return "r"; }
 template <> const char* modeString<Mode::readWrite>() { return "r+"; }
@@ -401,18 +495,6 @@ template <> const char* modeString<Mode::write>() { return "w"; }
 template <> const char* modeString<Mode::truncate>() { return "w+"; }
 template <> const char* modeString<Mode::append>() { return "a"; }
 template <> const char* modeString<Mode::readAppend>() { return "a+"; }
-
-template <Mode>
-struct Traits {
-    struct Base;
-};
-
-template <> struct Traits<Mode::read> { using Base = ReaderBase; };
-template <> struct Traits<Mode::readWrite> { using Base = ReaderWriterBase; };
-template <> struct Traits<Mode::write> { using Base = WriterBase; };
-template <> struct Traits<Mode::truncate> { using Base = ReaderWriterBase; };
-template <> struct Traits<Mode::append> { using Base = WriterBase; };
-template <> struct Traits<Mode::readAppend> { using Base = ReaderWriterBase; };
 
 template <Mode MODE>
 class Opener : public Traits<MODE>::Base {
@@ -481,32 +563,19 @@ size_t write(const char* filename, const std::string& s) {
     return write(filename, s.data(), s.size());
 }
 
-/** Read all the lines of a file into a container. */
-template <typename Container>
-void readLines(const char* filename, Container& c) {
-    Reader(filename).readLines(c);
+inline
+void readLines(const char* filename, Lines& lines) {
+    Reader(filename).lines().read(lines);
 }
 
-/** Read all the lines of a file and return as a container. */
-template <typename Container>
-Container readLines(const char* filename) {
-    return Reader(filename).readLines<Container>();
+inline
+Lines readLines(const char* filename) {
+    return Reader(filename).lines().read();
 }
 
-/** Call a function for each line in a file */
-template <typename Function>
-void forEachLine(const char* filename, Function f) {
-    return Reader(filename).forEachLine(f);
-}
-
-template <typename Container>
-size_t writeLines(const char* filename, Container c) {
-    return Writer(filename).writeLines(c);
-}
-
-template <typename ForwardIt>
-size_t writeLines(const char* filename, ForwardIt begin, ForwardIt end) {
-    return Writer(filename).writeLines(begin, end);
+inline
+size_t writeLines(const char* filename, const Lines& lines) {
+    return writeLines<>(filename, lines);
 }
 
 inline
@@ -516,13 +585,14 @@ size_t size(const char* filename) {
     return in.tellg();
 }
 
-inline
-const char* lineEnding() {
-#if TFILE_WINDOWS
-    return "\r\n";
-#else
-    return "\n";
-#endif
+template <typename Container>
+size_t writeLines(const char* filename, Container c) {
+    return Writer(filename).writeLines().write(c);
+}
+
+template <typename ForwardIt>
+size_t writeLines(const char* filename, ForwardIt begin, ForwardIt end) {
+    return Writer(filename).writeLines().write(begin, end);
 }
 
 }  // namespace tfile

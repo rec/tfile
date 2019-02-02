@@ -1,3 +1,4 @@
+#include <iostream>
 #include <tfile/tfile.h>
 
 #define CATCH_CONFIG_MAIN
@@ -77,7 +78,7 @@ TEST_CASE("move semantics", "[move]") {
         rw1.seek(0);
         std::string s;
 
-        REQUIRE(rw1.readLine(s) == true);
+        REQUIRE(rw1.readLines().readOne(s) == true);
         REQUIRE(s == "hello, move");
     }
 
@@ -118,15 +119,16 @@ TEST_CASE("readLine linux", "[readLine linux]") {
     tfile::write(testFilename, "line1\nl\rine2\r\nline3");
 
     tfile::Reader reader(testFilename);
-    std::vector<std::string> lines;
+    std::vector<std::string> result;
     std::string line;
-    while (readLineLinux(reader, line))
-        lines.push_back(line);
+    auto lines = reader.lines<tfile::Newline::unix>();
+    while (lines.readOne(line))
+        result.push_back(line);
 
-    REQUIRE(lines.size() == 3);
-    REQUIRE(lines[0] == "line1");
-    REQUIRE(lines[1] == "l\rine2\r");
-    REQUIRE(lines[2] == "line3");
+    REQUIRE(result.size() == 3);
+    REQUIRE(result[0] == "line1");
+    REQUIRE(result[1] == "l\rine2\r");
+    REQUIRE(result[2] == "line3");
 }
 
 TEST_CASE("readLine windows", "[readLine windows]") {
@@ -134,37 +136,38 @@ TEST_CASE("readLine windows", "[readLine windows]") {
     tfile::write(testFilename, "line1\nl\rine2\r\nline3");
 
     tfile::Reader reader(testFilename);
-    std::vector<std::string> lines;
+    std::vector<std::string> result;
     std::string line;
-    while (readLineWindows(reader, line))
-        lines.push_back(line);
+    auto lines = reader.lines<tfile::Newline::windows>();
+    while (lines.readOne(line))
+        result.push_back(line);
 
-    REQUIRE(lines.size() == 2);
-    REQUIRE(lines[0] == "line1\nl\rine2");
-    REQUIRE(lines[1] == "line3");
+    CHECK(result[0] == "line1\nl\rine2");
+    REQUIRE(result[1] == "line3");
+    REQUIRE(result.size() == 2);
 }
 
 TEST_CASE("line iteration", "[line iteration]") {
     FileDeleter d1{testFilename};
     tfile::writeLines(testFilename, {"hello", "world", ""});
 
- auto lines = tfile::Reader(testFilename).readLines();
-    REQUIRE(lines.size() == 3);
-    REQUIRE(lines[0] == "hello");
-    REQUIRE(lines[1] == "world");
-    REQUIRE(lines[2] == "");
+    auto result = tfile::Reader(testFilename).lines().read();
+    REQUIRE(result[0] == "hello");
+    REQUIRE(result[1] == "world");
+    REQUIRE(result.size() == 3);
+    REQUIRE(result[2] == "");
 }
 
 TEST_CASE("line iteration2", "[line iteration2]") {
     FileDeleter d1{testFilename};
     tfile::writeLines(testFilename, {"hello", "world", ""});
 
-    std::vector<std::string> lines;
-    tfile::Reader(testFilename).fillLines(std::back_inserter(lines));
-    REQUIRE(lines.size() == 3);
-    REQUIRE(lines[0] == "hello");
-    REQUIRE(lines[1] == "world");
-    REQUIRE(lines[2] == "");
+    std::vector<std::string> result;
+    tfile::Reader(testFilename).lines().fill(std::back_inserter(result));
+    REQUIRE(result.size() == 3);
+    REQUIRE(result[0] == "hello");
+    REQUIRE(result[1] == "world");
+    REQUIRE(result[2] == "");
 }
 
 TEST_CASE("line iteration3", "[line iteration3]") {
@@ -172,7 +175,7 @@ TEST_CASE("line iteration3", "[line iteration3]") {
     tfile::writeLines(testFilename, {"hello", "world", ""});
 
     int i = 0;
-    tfile::Reader(testFilename).forEachLine([&](std::string s) {
+    tfile::Reader(testFilename).lines().forEach([&](std::string s) {
         if (++i == 1) {
             REQUIRE(s == "hello");
         } else if (i == 2) {
